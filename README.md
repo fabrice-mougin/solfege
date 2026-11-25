@@ -2,6 +2,10 @@
 
 Copier solfege.html et ouvrez dans un navigateur.
 
+# Publié sur github pages 
+
+Voici un lien pour essayer : https://fabrice-mougin.github.io/solfege/solfege.html
+
 # Lecture de notes 
 
 Lecture de notes avec statistiques, soit avec des boutons, soit à la voix (hauteur de la voix).
