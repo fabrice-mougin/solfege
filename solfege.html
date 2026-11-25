@@ -44,6 +44,13 @@
   .ok .nt{fill:var(--ok);stroke:none} .ok .stem,.ok .led{stroke:var(--ok)}
   .bad .nt{fill:var(--bad);stroke:none} .bad .stem,.bad .led{stroke:var(--bad)}
   .anim .nw{transition:transform .18s ease-out, opacity .18s ease-out}
+  /* Anticipation : les notes à venir sont grises, la note courante passe en noir */
+  .anim .nt{transition:fill .15s ease-out, stroke .15s ease-out}
+  .anim .stem,.anim .led{transition:stroke .15s ease-out}
+  .anim .nw:not(.cur):not(.ok) .nt{fill:#a3a3a3}
+  .anim .nw:not(.cur):not(.ok) .stem,.anim .nw:not(.cur):not(.ok) .led{stroke:#a3a3a3}
+  .anim .nw.gold:not(.cur):not(.ok) .nt{fill:#e8cf86;stroke:#c9a84a}
+  .anim .nw.gold:not(.cur):not(.ok) .stem,.anim .nw.gold:not(.cur):not(.ok) .led{stroke:#dcc06a}
   .nw.gone,.nw.enter{opacity:0}
   #cursor{fill:#e3e9ff}
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
