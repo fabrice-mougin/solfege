@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proto – reconnaissance des notes parlées (Vosk)</title>
+<style>
+  :root{--ink:#1c1c1e;--mute:#6b6b70;--bg:#f6f4ee;--line:#e4e0d5;--acc:#3b5bdb;--ok:#1a9b4b;--bad:#d6332f}
+  *{box-sizing:border-box}
+  html{overflow-x:hidden}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  .wrap{max-width:520px;margin:0 auto;padding:16px}
+  h1{font-size:19px;margin:4px 0 2px}
+  .mute{color:var(--mute);font-size:13px;line-height:1.4}
+  button{font:inherit;cursor:pointer;touch-action:manipulation}
+  .big{width:100%;padding:14px;border:0;border-radius:14px;background:var(--acc);color:#fff;font-size:17px;font-weight:600;margin-top:12px}
+  .big:disabled{opacity:.5}
+  .row{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:14px}
+  .status{margin-top:10px;font-size:14px;min-height:20px}
+  .err{color:var(--bad)}
+  .note{margin:18px 0 6px;height:150px;display:flex;align-items:center;justify-content:center;font-size:96px;font-weight:800;background:#fff;border:1px solid var(--line);border-radius:18px;transition:color .1s}
+  .note.partial{color:#9a9a9a}
+  .note.final{color:var(--ok)}
+  .level{height:8px;background:#e8e5dc;border-radius:5px;overflow:hidden}
+  .level i{display:block;height:100%;width:0;background:var(--acc);transition:width .05s}
+  .raw{font-family:ui-monospace,Menlo,monospace;font-size:13px;min-height:20px;margin-top:8px;color:var(--mute);word-break:break-word}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+  td,th{padding:5px 4px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--mute);font-weight:600;font-size:12px}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Proto : notes parlées → reconnaissance (Vosk)</h1>
+  <p class="mute">Dis « do », « ré », « mi », « fa », « sol », « la » ou « si ». Tout tourne dans le téléphone, rien n'est envoyé sur Internet. Le premier lancement télécharge le modèle français (~40 Mo), ensuite il est gardé en mémoire par le navigateur.</p>
+
+  <div class="row">
+    <label><input type="checkbox" id="free"> Mode diagnostic : texte libre (sans liste de mots)</label>
+  </div>
+  <button class="big" id="go">Démarrer l'écoute</button>
+  <div class="status" id="status"></div>
+
+  <div class="note" id="note">–</div>
+  <div class="level"><i id="lvl"></i></div>
+  <div class="raw" id="raw"></div>
+
+  <table>
+    <thead><tr><th>#</th><th>Note</th><th>Texte reconnu</th><th class="n">Partiel</th><th class="n">Final</th></tr></thead>
+    <tbody id="log"></tbody>
+  </table>
+  <p class="mute">« Partiel » : délai entre le début de la voix et la première apparition de la note (affichage provisoire en gris). « Final » : délai jusqu'au résultat définitif (en vert).</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
+<script>
+(function(){
+  const MODEL_URL = 'model.tar.gz';   // archive du modèle, à côté de cette page
+  const $ = id => document.getElementById(id);
+
+  // Mots acceptés : les 7 notes et des homophones fréquents. Les mots absents du vocabulaire du modèle sont ignorés par Vosk.
+  const VARIANTS = {
+    'Do':  ['do','dos','dot','dau'],
+    'Ré':  ['ré','re','rai','raie','rez','ray'],
+    'Mi':  ['mi','mie','mis','mit','mille'],
+    'Fa':  ['fa','far','fat'],
+    'Sol': ['sol','sole','saule','solle'],
+    'La':  ['la','là','las','lat'],
+    'Si':  ['si','scie','six','ci','sie']
+  };
+  const TO_NOTE = {};
+  Object.entries(VARIANTS).forEach(([n, ws]) => ws.forEach(w => TO_NOTE[w] = n));
+  const GRAMMAR = JSON.stringify([...Object.keys(TO_NOTE), '[unk]']);
+
+  // Dernière note trouvée dans un texte (« do ré » -> Ré)
+  function lastNote(text){
+    const toks = (text || '').toLowerCase().split(/[\s']+/).filter(Boolean);
+    for(let i = toks.length-1; i >= 0; i--) if(TO_NOTE[toks[i]]) return TO_NOTE[toks[i]];
+    return null;
+  }
+
+  let model = null, rec = null, ctx = null, node = null, stream = null;
+  let voiceStart = 0, partialAt = 0, count = 0, lastPartialNote = null;
+
+  function status(t, cls){ $('status').innerHTML = cls ? `<span class="${cls}">${t}</span>` : t; }
+  function show(n, kind){ const el = $('note'); el.textContent = n || '–'; el.className = 'note ' + (kind || ''); }
+
+  function addLog(note, text, pMs, fMs){
+    count++;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${count}</td><td><b>${note || '?'}</b></td><td>${text || ''}</td><td class="n">${pMs != null ? pMs + ' ms' : '–'}</td><td class="n">${fMs != null ? fMs + ' ms' : '–'}</td>`;
+    $('log').prepend(tr);
+    while($('log').children.length > 30) $('log').lastChild.remove();
+  }
+
+  async function start(){
+    $('go').disabled = true;
+    try{
+      if(!window.Vosk) throw new Error('Bibliothèque Vosk non chargée (vérifie la connexion).');
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Micro indisponible : ouvre la page en https.');
+
+      // micro d'abord (doit suivre le clic)
+      stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, channelCount:1}});
+      const AC = window.AudioContext || window.webkitAudioContext;
+      try{ ctx = new AC({sampleRate:16000}); }catch(e){ ctx = new AC(); }   // 16 kHz = moins de calcul, sinon fréquence native
+      if(ctx.resume) await ctx.resume();
+
+      if(!model){
+        const t0 = performance.now();
+        const tick = setInterval(() => status(`Chargement du modèle… ${Math.round((performance.now()-t0)/1000)} s (la première fois peut prendre une minute)`), 500);
+        try{
+          // Vosk ne signale pas un fichier manquant : on vérifie d'abord qu'il existe
+          const h = await fetch(MODEL_URL, {method:'HEAD', cache:'no-store'}).catch(() => null);
+          if(!h || !h.ok) throw new Error(`fichier « ${MODEL_URL} » introuvable à côté de la page (HTTP ${h ? h.status : 'réseau'}).`);
+          model = await Promise.race([
+            Vosk.createModel(MODEL_URL),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('le modèle ne s\'est pas chargé en 3 minutes.')), 180000))
+          ]);
+        }
+        finally{ clearInterval(tick); }
+        status(`Modèle prêt en ${((performance.now()-t0)/1000).toFixed(1)} s.`);
+      }
+
+      const free = $('free').checked;
+      rec = free ? new model.KaldiRecognizer(ctx.sampleRate) : new model.KaldiRecognizer(ctx.sampleRate, GRAMMAR);
+
+      rec.on('partialresult', m => {
+        const p = m.result.partial;
+        if(!p) return;
+        $('raw').textContent = '… ' + p;
+        const n = lastNote(p);
+        if(n && n !== lastPartialNote){ lastPartialNote = n; partialAt = performance.now(); show(n, 'partial'); }
+      });
+      rec.on('result', m => {
+        const text = m.result.text;
+        if(!text){ lastPartialNote = null; return; }
+        const n = lastNote(text), now = performance.now();
+        $('raw').textContent = '✔ ' + text;
+        show(n || '?', n ? 'final' : '');
+        addLog(n, text, voiceStart && partialAt ? Math.round(partialAt - voiceStart) : null, voiceStart ? Math.round(now - voiceStart) : null);
+        voiceStart = 0; partialAt = 0; lastPartialNote = null;
+      });
+
+      // envoi du son à Vosk + niveau du micro + repérage du début de la voix
+      const src = ctx.createMediaStreamSource(stream);
+      node = ctx.createScriptProcessor(2048, 1, 1);
+      let loud = 0;
+      node.onaudioprocess = ev => {
+        const d = ev.inputBuffer.getChannelData(0);
+        let s = 0; for(let i=0;i<d.length;i++) s += d[i]*d[i];
+        const rms = Math.sqrt(s/d.length);
+        $('lvl').style.width = Math.min(100, rms*600) + '%';
+        if(rms > 0.02){ if(++loud === 1 && !voiceStart) voiceStart = performance.now() - d.length/ctx.sampleRate*1000; }
+        else loud = 0;
+        try{ rec.acceptWaveform(ev.inputBuffer); }catch(e){ console.error(e); }
+      };
+      src.connect(node);
+      node.connect(ctx.destination);   // nécessaire pour que le traitement tourne sur certains navigateurs (sortie silencieuse)
+
+      status(`🎤 J'écoute (${free ? 'texte libre' : '7 notes seulement'}, ${ctx.sampleRate} Hz). Dis une note…`);
+      $('go').textContent = 'Arrêter';
+      $('go').onclick = stop;
+    }catch(e){
+      status('Erreur : ' + (e && e.message ? e.message : e), 'err');
+      cleanup();
+    }
+    $('go').disabled = false;
+  }
+
+  function cleanup(){
+    if(node){ try{ node.disconnect(); }catch(e){} node = null; }
+    if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if(ctx){ try{ ctx.close(); }catch(e){} ctx = null; }
+    if(rec){ try{ rec.remove(); }catch(e){} rec = null; }
+  }
+  function stop(){
+    cleanup();
+    status('Écoute arrêtée.');
+    $('go').textContent = "Démarrer l'écoute";
+    $('go').onclick = start;
+  }
+
+  $('go').onclick = start;
+  $('free').onchange = () => { if(rec){ stop(); start(); } };
+})();
+</script>
+</body>
+</html>
