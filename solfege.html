@@ -71,6 +71,17 @@
   .keys{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
   .keys button{padding:13px 0;border:1px solid var(--line);background:#fff;border-radius:11px;font-size:15px;font-weight:600}
   .keys button:active{background:#e8ecff}
+  /* Clavier en étoile : Do au centre, Ré→Si en cercle dans le sens des aiguilles d'une montre */
+  .keys.star{display:block;position:relative;width:min(300px,86vw,40vh);height:min(300px,86vw,40vh);margin:2px auto 0}
+  .keys.star button{position:absolute;width:26%;height:26%;padding:0;border-radius:50%;transform:translate(-50%,-50%);font-size:18px}
+  .keys.star button.c{width:32%;height:32%;font-size:22px;background:#e8ecff;border-color:#c5cff5}
+  .keys.star button.c:active{background:#d3dcff}
+  .keys button.hit-ok{background:#c9efd6!important;border-color:var(--ok)!important;box-shadow:0 0 0 2px var(--ok) inset}
+  .keys button.hit-bad{background:#fbd5d3!important;border-color:var(--bad)!important;box-shadow:0 0 0 2px var(--bad) inset}
+  .heard .pill.huh{background:#ece9f8;color:#4c3d99}
+  body.starmode svg#staff{max-height:38vh}
+  body.starmode .heard{min-height:40px;margin:6px 0 2px}
+  @media (max-height:700px){ body.starmode svg#staff{max-height:33vh} body.starmode .wrap{padding-top:8px;padding-bottom:8px} body.starmode .top{margin-bottom:4px} }
   .score{font-size:56px;font-weight:800;line-height:1;margin:6px 0 2px}
   .score small{font-size:24px;font-weight:600;color:var(--mute)}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
@@ -113,6 +124,7 @@
   <!-- Écran d'accueil -->
   <section id="start">
     <h1>Lecture de notes à la voix</h1>
+    <p style="margin:2px 0 8px"><a href="palais-mental-A4.pdf" target="_blank" rel="noopener" style="color:var(--acc);font-weight:600;text-decoration:none">🏛 Palais mental des interlignes</a> <span class="mute">(PDF A4 à imprimer)</span></p>
     <p class="mute">Une note apparaît sur la grande portée (clé de sol ou clé de fa, lignes supplémentaires comprises). Chante son nom : Do, Ré, Mi, Fa, Sol, La, Si. L'appli écoute, note chaque erreur et attend la bonne réponse avant de passer à la suivante.</p>
     <div class="card" style="margin-top:12px">
       <div class="row">
@@ -131,6 +143,22 @@
           <option value="2">2 (anticipation)</option>
           <option value="3">3 (anticipation)</option>
           <option value="4">4 (anticipation)</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label for="answer">Réponse</label>
+        <select id="answer">
+          <option value="buttons">Boutons seulement</option>
+          <option value="sing" selected>Voix chantée (hauteur)</option>
+          <option value="words">Mots parlés (do, ré, mi…)</option>
+        </select>
+      </div>
+      <p class="mute" id="wordsHint" style="margin:4px 0 0" hidden>🗣 Dis le nom des notes à la suite, sans attendre : tu peux parler en avance sur les notes affichées. Le premier lancement télécharge le modèle de reconnaissance (~40 Mo), ensuite il reste dans le navigateur. Le piano est coupé dans ce mode.</p>
+      <div class="row" style="margin-top:10px">
+        <label for="kbd">Clavier</label>
+        <select id="kbd">
+          <option value="line">Ligne (Do à Si)</option>
+          <option value="star">Étoile (Do au centre)</option>
         </select>
       </div>
       <div class="row" style="margin-top:10px">
@@ -333,12 +361,55 @@ function updateMemory(old, res){
   mem.sort((a,b) => a.d - b.d);
   return {mem, groups};
 }
+/* ----- Mots parlés (Vosk) ----- */
+// Mots acceptés : les 7 notes et des homophones fréquents
+const WORD_VARIANTS = {
+  0: ['do','dos','dot','dau'],
+  1: ['ré','re','rai','raie','rez','ray'],
+  2: ['mi','mie','mis','mit','mille'],
+  3: ['fa','far','fat'],
+  4: ['sol','sole','saule','solle'],
+  5: ['la','là','las','lat'],
+  6: ['si','scie','six','ci','sie']
+};
+const WORD_TO_STEP = {};
+Object.keys(WORD_VARIANTS).forEach(k => WORD_VARIANTS[k].forEach(w => WORD_TO_STEP[w] = +k));
+const WORD_GRAMMAR = JSON.stringify([...Object.keys(WORD_TO_STEP), '[unk]']);
+const tokenize = t => (t || '').toLowerCase().split(/[\s']+/).filter(Boolean);
+const tokenStep = w => (w in WORD_TO_STEP) ? WORD_TO_STEP[w] : null;   // null = mot non compris
+
+// Extrait les mots « stables » d'un flux de résultats Vosk.
+//  - résultat partiel : tous les mots sauf le dernier (qui peut encore changer)
+//  - dernier mot : accepté s'il n'a pas changé depuis stableMs
+//  - résultat final : le reste
+//  - skip() : tout ce qui a été entendu jusqu'ici est abandonné (après une erreur)
+function makeWordStream(stableMs){
+  let seen = [], used = 0, changedAt = 0;
+  return {
+    partial(toks, now){
+      if(toks.length !== seen.length || toks.some((t,i) => t !== seen[i])){ seen = toks.slice(); changedAt = now; }
+      const out = [];
+      while(used < seen.length - 1) out.push(seen[used++]);
+      return out;
+    },
+    tick(now){
+      if(used < seen.length && now - changedAt >= stableMs) return [seen[used++]];
+      return [];
+    },
+    final(toks){
+      const out = toks.slice(Math.min(used, toks.length));
+      seen = []; used = 0;
+      return out;
+    },
+    skip(){ used = Math.max(used, seen.length); }
+  };
+}
 //#PURE-END
 
 (function(){
   const $ = id => document.getElementById(id);
   const REQ = 5;           // 5 mesures stables de 50 ms = 250 ms de note tenue
-  const HKEY = 'solfege.v1.games', SKEY = 'solfege.v1.sound', LKEY = 'solfege.v1.look', RKEY = 'solfege.v1.review', RPKEY = 'solfege.v1.reviewPct';
+  const HKEY = 'solfege.v1.games', SKEY = 'solfege.v1.sound', LKEY = 'solfege.v1.look', RKEY = 'solfege.v1.review', RPKEY = 'solfege.v1.reviewPct', KKEY = 'solfege.v1.kbd', AKEY = 'solfege.v1.answer';
   let S = null;            // session en cours
   let ctx = null, an = null, buf = null, stream = null, timer = null, clockTimer = null;
   let soundOn = true;
@@ -482,6 +553,140 @@ function updateMemory(old, res){
     });
   }
 
+  // Mot non compris : deux petites notes boisées qui montent, comme un « hein ? » (timbre marimba, distinct du piano)
+  function playHuh(){
+    if(!soundOn || !ctx) return;
+    const t = ctx.currentTime, out = ctx.createGain();
+    out.gain.value = 0.5; out.connect(ctx.destination);
+    [[523.25,0],[698.46,0.11]].forEach(([f,dt]) => {          // Do5 puis Fa5
+      [[1,1,0.32],[3.93,0.22,0.06],[9.2,0.05,0.025]].forEach(([r,a,len]) => {
+        const o = ctx.createOscillator(), g = ctx.createGain(), st = t+dt;
+        o.type = 'sine'; o.frequency.value = f*r;
+        g.gain.setValueAtTime(0.0001, st);
+        g.gain.linearRampToValueAtTime(a*0.32, st+0.004);
+        g.gain.exponentialRampToValueAtTime(0.0001, st+len);
+        o.connect(g); g.connect(out); o.start(st); o.stop(st+len+0.02);
+      });
+    });
+  }
+
+  /* ---------- Mots parlés : reconnaissance Vosk ---------- */
+  const VOSK_LIB = 'https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js';
+  // Adresse complète obligatoire : le worker de Vosk résout les chemins depuis la racine du site
+  const VOSK_MODEL = new URL('model.tar.gz', location.href).href;
+  const SILENCE_RMS = 0.012, SILENCE_MS = 300, STABLE_MS = 200;
+  let vModel = null, wctx = null, wnode = null, wmedia = null, wrec = null, wstream = null;
+
+  function loadVoskLib(){
+    return new Promise((res, rej) => {
+      if(window.Vosk) return res();
+      const sc = document.createElement('script');
+      sc.src = VOSK_LIB; sc.onload = () => res();
+      sc.onerror = () => rej(new Error('impossible de charger la bibliothèque de reconnaissance (connexion ?).'));
+      document.head.appendChild(sc);
+    });
+  }
+  async function loadVoskModel(onTick){
+    if(vModel) return vModel;
+    await loadVoskLib();
+    const h = await fetch(VOSK_MODEL, {method:'HEAD', cache:'no-store'}).catch(() => null);
+    if(!h || !h.ok) throw new Error(`modèle « model.tar.gz » introuvable à côté de la page (HTTP ${h ? h.status : 'réseau'}).`);
+    const t0 = performance.now(), iv = setInterval(() => onTick && onTick(Math.round((performance.now()-t0)/1000)), 500);
+    try{
+      vModel = await Promise.race([
+        window.Vosk.createModel(VOSK_MODEL),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('le modèle ne s\'est pas chargé en 3 minutes.')), 180000))
+      ]);
+    } finally { clearInterval(iv); }
+    return vModel;
+  }
+
+  async function startWords(){
+    wmedia = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, channelCount:1}});
+    const AC = window.AudioContext || window.webkitAudioContext;
+    try{ wctx = new AC({sampleRate:16000}); }catch(e){ wctx = new AC(); }
+    if(wctx.resume) await wctx.resume();
+    wrec = new vModel.KaldiRecognizer(wctx.sampleRate, WORD_GRAMMAR);
+    wstream = makeWordStream(STABLE_MS);
+    wrec.on('partialresult', m => {
+      if(!S || S.mode !== 'words') return;
+      const words = wstream.partial(tokenize(m.result && m.result.partial), performance.now());
+      if(S.wIgnore){ wstream.skip(); return; }
+      words.forEach(onWord);
+    });
+    wrec.on('result', m => {
+      if(!S || S.mode !== 'words') return;
+      const words = wstream.final(tokenize(m.result && m.result.text));
+      if(S.wIgnore) return;
+      words.forEach(onWord);
+    });
+    const src = wctx.createMediaStreamSource(wmedia);
+    wnode = wctx.createScriptProcessor(1024, 1, 1);
+    let quietSince = 0;
+    wnode.onaudioprocess = ev => {
+      const d = ev.inputBuffer.getChannelData(0), now = performance.now();
+      let sum = 0; for(let i=0;i<d.length;i++) sum += d[i]*d[i];
+      if(Math.sqrt(sum/d.length) < SILENCE_RMS){ if(!quietSince) quietSince = now; } else quietSince = 0;
+      if(S && S.mode === 'words'){
+        if(S.wIgnore && quietSince && now - quietSince >= SILENCE_MS){   // court silence : on reprend
+          S.wIgnore = false; wstream.skip();
+        }
+        if(!S.wIgnore) wstream.tick(now).forEach(onWord);
+      }
+      try{ wrec.acceptWaveform(ev.inputBuffer); }catch(e){ console.error(e); }
+    };
+    src.connect(wnode); wnode.connect(wctx.destination);
+  }
+  function stopWords(){
+    if(wnode){ try{ wnode.disconnect(); }catch(e){} wnode.onaudioprocess = null; wnode = null; }
+    if(wmedia){ wmedia.getTracks().forEach(t => t.stop()); wmedia = null; }
+    if(wctx){ try{ wctx.close(); }catch(e){} wctx = null; }
+    if(wrec){ try{ wrec.remove(); }catch(e){} wrec = null; }
+    wstream = null;
+  }
+
+  // Un mot reconnu arrive (asynchrone) : il entre dans la file, limitée au nombre de notes visibles
+  function onWord(w){
+    if(!S || S.mode !== 'words' || S.wIgnore) return;
+    const st = tokenStep(w);
+    if(st === null){ notUnderstood(); return; }
+    // Pas plus de mots en attente que de notes affichées et pas encore jouées (sinon c'est deviner, pas lire)
+    if(S.wq.length >= S.look - (S.locked ? 1 : 0)) return;
+    S.wq.push(st);
+    drainWords();
+  }
+  // Le moteur digère la file dans l'ordre, note après note
+  function drainWords(){
+    if(!S || S.draining) return;
+    S.draining = true;
+    try{
+      while(S && !S.locked && S.wq.length){
+        const st = S.wq.shift(), ok = st === stepOf(S.cur.d);
+        flashKey(st, ok);
+        if(ok){ success(); continue; }
+        wrong(st);                                // erreur de lecture : comptée sur la note courante
+        S.wq.length = 0; S.wIgnore = true;         // file vidée, on attend un court silence
+        if(wstream) wstream.skip();
+      }
+    } finally { if(S) S.draining = false; }
+  }
+  // Mot non compris : pas d'erreur de lecture, juste un son et une reprise après un silence
+  function notUnderstood(){
+    S.wMiss++; S.wq.length = 0; S.wIgnore = true;
+    if(wstream) wstream.skip();
+    playHuh();
+    showHeard('? pas compris', 'huh');
+  }
+  const flashTimers = {};
+  function flashKey(st, ok){
+    const b = document.querySelector(`#keys button[data-s="${st}"]`);
+    if(!b) return;
+    b.classList.remove('hit-ok', 'hit-bad'); void b.offsetWidth;
+    b.classList.add(ok ? 'hit-ok' : 'hit-bad');
+    clearTimeout(flashTimers[st]);
+    flashTimers[st] = setTimeout(() => b.classList.remove('hit-ok', 'hit-bad'), 380);
+  }
+
   function playWrong(){
     if(!soundOn || !ctx) return;
     const a = playSample(55, 0.30, 0.03, 0.10, 0), b = playSample(52, 0.28, 0.03, 0.12, 0.07);
@@ -597,6 +802,7 @@ function updateMemory(old, res){
     buf = new Float32Array(an.fftSize);
   }
   function stopAudio(){
+    stopWords();
     if(timer){ clearInterval(timer); timer = null; }
     if(clockTimer){ clearInterval(clockTimer); clockTimer = null; }
     if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
@@ -623,7 +829,7 @@ function updateMemory(old, res){
   /* ---------- Déroulement ---------- */
   function showHeard(txt, kind){
     const h = $('heard');
-    if(!txt){ h.innerHTML = S && S.mic ? '🎤 Chante le nom de la note…' : 'Appuie sur le bon bouton'; return; }
+    if(!txt){ h.innerHTML = S && S.mode === 'words' ? '🗣 Dis le nom des notes…' : S && S.mic ? '🎤 Chante le nom de la note…' : 'Appuie sur le bon bouton'; return; }
     h.innerHTML = `<span class="pill ${kind||''}">${txt}</span>`;
   }
 
@@ -635,7 +841,8 @@ function updateMemory(old, res){
     S.armed = (S.lastOk === null);          // si on vient de réussir, attendre que la voix change ou s'arrête
     $('cnt').textContent = S.res.length + 1;
     $('bar').style.width = (S.res.length / S.n * 100) + '%';
-    if(clearHeard) showHeard('');
+    if(clearHeard && !S.wIgnore) showHeard('');
+    if(S.mode === 'words' && S.wq.length) drainWords();   // mots dits pendant l'attente
   }
   function newNote(){ shiftQueue(); startCurrent(true); }
 
@@ -651,7 +858,7 @@ function updateMemory(old, res){
     S.muteUntil = soundOn ? performance.now() + (ahead ? 450 : 700) : 0;
     if(!soundOn) S.fastN++;
     const corrected = S.cur.review && S.curErrors === 0;   // note ratée la fois d'avant, trouvée du premier coup
-    if(corrected) playBell(); else playPiano(midiOf(S.cur.d));
+    if(corrected) playBell(); else if(S.mode !== 'words') playPiano(midiOf(S.cur.d));   // mots parlés : pas de piano
     setCls(S.queue[0], 'ok');
     showHeard(corrected ? '✨ ' + NAMES[step] : NAMES[step], corrected ? 'magic' : 'good');
     $('okc').textContent = S.res.filter(r => r.errors===0).length;
@@ -728,7 +935,7 @@ function updateMemory(old, res){
     const secs = recent.map(g => Math.round(g.avg/100)/10);
     const best = Math.max(...H.map(g => g.pct));
     const rows = H.slice(-8).reverse().map(g =>
-      `<tr><td>${fmtDate(g.t)}${g.fast ? ' ⚡' : ''}${(g.look||1) > 1 ? ' 👁' + g.look : ''}${g.rp ? ' 🔁' : ''}</td><td class="n">${g.n}</td><td class="n"><b>${g.pct} %</b></td><td class="n">${fmtTime(g.ms)}</td><td class="n">${(g.avg/1000).toFixed(1)} s</td></tr>`).join('');
+      `<tr><td>${fmtDate(g.t)}${g.fast ? ' ⚡' : ''}${(g.look||1) > 1 ? ' 👁' + g.look : ''}${g.rp ? ' 🔁' : ''}${g.ans === 'words' ? ' 🗣' : ''}</td><td class="n">${g.n}</td><td class="n"><b>${g.pct} %</b></td><td class="n">${fmtTime(g.ms)}</td><td class="n">${(g.avg/1000).toFixed(1)} s</td></tr>`).join('');
     el.innerHTML = `
       <h2>Mes progrès</h2>
       <div class="mute">${H.length} partie${H.length>1?'s':''} · meilleur score : <b>${best} %</b></div>
@@ -736,7 +943,7 @@ function updateMemory(old, res){
       ${spark(pcts, 0, 100, ' %', '#3b5bdb')}
       <div class="charttitle">Temps moyen par note (plus bas = mieux)</div>
       ${spark(secs, 0, Math.max(...secs)*1.2 || 1, ' s', '#1a9b4b')}
-      <div class="mute" style="font-size:12px;margin-top:8px">⚡ son coupé · 👁 anticipation · 🔁 révision des notes ratées</div>
+      <div class="mute" style="font-size:12px;margin-top:8px">⚡ son coupé · 👁 anticipation · 🔁 révision des notes ratées · 🗣 mots parlés</div>
       <div class="tw"><table><tr><th>Date</th><th class="n">Notes</th><th class="n">Score</th><th class="n">Durée</th><th class="n">Moy.</th></tr>${rows}</table></div>
       <div style="margin-top:10px"><button class="ghost small" id="clear">Effacer l'historique</button></div>`;
     el.hidden = false;
@@ -754,6 +961,7 @@ function updateMemory(old, res){
     const res = S.res;
     const fast = res.length > 0 && S.fastN*2 >= res.length;   // majorité des notes jouées sans son
     const look = S.look || 1;
+    const ans = S.mode || 'sing', wMiss = S.wMiss || 0;
     const rp = S.rp || 0, memBefore = S.mem || [];
     S = null;
     stopAudio();
@@ -767,12 +975,12 @@ function updateMemory(old, res){
     }
     const p = pct(st.first, st.n);
     const hist = loadHist();
-    const sameMode = hist.filter(g => !!g.fast === fast && (g.look||1) === look);   // même mode : son/rapide et nombre de notes visibles
+    const sameMode = hist.filter(g => !!g.fast === fast && (g.look||1) === look && (g.ans === 'words') === (ans === 'words'));   // même mode : son/rapide et nombre de notes visibles
     const prev = sameMode.length ? sameMode[sameMode.length-1] : null;
     const bestBefore = sameMode.length ? Math.max(...sameMode.map(g => g.pct)) : -1;
-    const modeTxt = (fast ? ' en mode rapide' : '') + (look > 1 ? ` en anticipation (${look} notes)` : '');
+    const modeTxt = (ans === 'words' ? ' aux mots parlés' : '') + (fast ? ' en mode rapide' : '') + (look > 1 ? ` en anticipation (${look} notes)` : '');
     let saved = false;
-    if(st.n >= 5){ hist.push({t:Date.now(), n:st.n, first:st.first, errs:st.errs, ms:Math.round(elapsed), avg:Math.round(st.avgMs), pct:p, fast, look, rp, rvN:st.byKind[0].n, rvFirst:st.byKind[0].first}); saved = saveHist(hist); }
+    if(st.n >= 5){ hist.push({t:Date.now(), n:st.n, first:st.first, errs:st.errs, ms:Math.round(elapsed), avg:Math.round(st.avgMs), pct:p, fast, look, ans, wMiss, rp, rvN:st.byKind[0].n, rvFirst:st.byKind[0].first}); saved = saveHist(hist); }
     // mémoire des notes ratées (mise à jour même si l'option est désactivée)
     const upd = updateMemory(memBefore, res);
     saveMem(upd.mem);
@@ -819,6 +1027,7 @@ function updateMemory(old, res){
         <div class="score">${st.first}<small> / ${st.n}</small></div>
         <div><b>${p} %</b> · ${verdict}</div>
         ${delta}
+        ${ans === 'words' ? `<div class="delta">🗣 Mots non compris : <b>${wMiss}</b> <span class="mute">(non comptés comme erreurs)</span></div>` : ''}
         <div class="grid2">
           <div class="kpi"><b>${fmtTime(elapsed)}</b><span>temps total</span></div>
           <div class="kpi"><b>${(st.avgMs/1000).toFixed(1)} s</b><span>temps moyen par note</span></div>
@@ -845,16 +1054,35 @@ function updateMemory(old, res){
     const look = Math.min(4, Math.max(1, parseInt($('look').value, 10) || 1));
     const rp = Math.max(0, Math.min(50, parseInt($('review').value, 10) || 0));
     const mem = loadMem();
+    let mode = $('answer').value;
     $('startMsg').textContent = '';
     unlockAudio();                 // doit être appelé directement dans le geste de l'utilisateur
     let mic = false;
-    try{ await initMic(); mic = true; }
-    catch(e){
-      if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
-      an = null;
-      $('startMsg').innerHTML = '<span class="err">' + (e && e.message ? e.message : 'Micro refusé') + ' Tu peux jouer avec les boutons.</span>';
+    if(mode === 'sing'){
+      try{ await initMic(); mic = true; }
+      catch(e){
+        if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+        an = null;
+        $('startMsg').innerHTML = '<span class="err">' + (e && e.message ? e.message : 'Micro refusé') + ' Tu peux jouer avec les boutons.</span>';
+        mode = 'buttons';
+      }
+    } else if(mode === 'words'){
+      $('go').disabled = true;
+      try{
+        if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('micro indisponible : ouvre la page en https.');
+        if(!vModel) $('startMsg').textContent = 'Chargement du modèle de reconnaissance…';
+        await loadVoskModel(sec => { $('startMsg').textContent = `Chargement du modèle de reconnaissance… ${sec} s (la première fois peut prendre une minute)`; });
+        await startWords();
+        $('startMsg').textContent = '';
+      }catch(e){
+        stopWords();
+        $('startMsg').innerHTML = '<span class="err">Mots parlés indisponibles : ' + (e && e.message ? e.message : e) + ' Tu peux jouer avec les boutons.</span>';
+        mode = 'buttons';
+      }
+      $('go').disabled = false;
     }
-    S = {n, mic, res:[], cur:null, totalErr:0, lastOk:null, locked:false, muteUntil:0, fastN:0, elapsed:0, lastTick:performance.now(),
+    try{ localStorage.setItem(AKEY, $('answer').value); }catch(e){}
+    S = {n, mic, mode, wq:[], wIgnore:false, wMiss:0, draining:false, res:[], cur:null, totalErr:0, lastOk:null, locked:false, muteUntil:0, fastN:0, elapsed:0, lastTick:performance.now(),
          look, queue:[], issued:0, prevNote:null, started:false,
          rp, mem, plan: rp ? makePlan(n, rp, mem.length) : new Set()};
     try{ localStorage.setItem(RPKEY, String(rp)); }catch(e){}
@@ -876,7 +1104,25 @@ function updateMemory(old, res){
     soundOn = !soundOn; paintSound();
     try{ localStorage.setItem(SKEY, soundOn ? '1' : '0'); }catch(e){}
   };
-  $('keys').innerHTML = NAMES.map((nm,i) => `<button data-s="${i}">${nm}</button>`).join('');
+  function renderKeys(){
+    const star = $('kbd').value === 'star', k = $('keys');
+    k.classList.toggle('star', star);
+    document.body.classList.toggle('starmode', star);
+    if(!star){ k.innerHTML = NAMES.map((nm,i) => `<button data-s="${i}">${nm}</button>`).join(''); return; }
+    let h = `<button class="c" data-s="0" style="left:50%;top:50%">Do</button>`;
+    for(let i=1;i<=6;i++){                       // Ré à midi, puis Mi, Fa, Sol, La, Si
+      const a = -Math.PI/2 + (i-1)*Math.PI/3;
+      h += `<button data-s="${i}" style="left:${(50+36*Math.cos(a)).toFixed(2)}%;top:${(50+36*Math.sin(a)).toFixed(2)}%">${NAMES[i]}</button>`;
+    }
+    k.innerHTML = h;
+  }
+  try{ const v = localStorage.getItem(KKEY); if(v === 'star' || v === 'line') $('kbd').value = v; }catch(e){}
+  $('kbd').onchange = () => { try{ localStorage.setItem(KKEY, $('kbd').value); }catch(e){} renderKeys(); };
+  renderKeys();
+  try{ const a = localStorage.getItem(AKEY); if(a === 'buttons' || a === 'sing' || a === 'words') $('answer').value = a; }catch(e){}
+  const paintAnswer = () => { $('wordsHint').hidden = $('answer').value !== 'words'; };
+  $('answer').onchange = () => { try{ localStorage.setItem(AKEY, $('answer').value); }catch(e){} paintAnswer(); };
+  paintAnswer();
   $('keys').addEventListener('click', e => { const b = e.target.closest('button'); if(b) answer(+b.dataset.s); });
   $('go').onclick = begin;
   $('stop').onclick = () => { if(S) finish(); };
