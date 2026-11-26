@@ -817,6 +817,21 @@ function makeWordStream(stableMs){
     }
   }
 
+  /* ---------- Écran toujours allumé pendant une partie (Screen Wake Lock) ---------- */
+  let wakeLock = null;
+  async function keepAwake(){
+    if(!('wakeLock' in navigator) || !S || document.visibilityState !== 'visible') return;
+    try{
+      if(wakeLock && !wakeLock.released) return;
+      wakeLock = await navigator.wakeLock.request('screen');
+    }catch(e){ wakeLock = null; }   // refusé (batterie faible, navigateur…) : la partie continue normalement
+  }
+  function releaseAwake(){
+    if(wakeLock){ try{ wakeLock.release(); }catch(e){} wakeLock = null; }
+  }
+  // Le navigateur libère le verrou quand on change d'onglet : on le reprend au retour
+  document.addEventListener('visibilitychange', () => { if(S && document.visibilityState === 'visible') keepAwake(); });
+
   /* ---------- Horloge ---------- */
   function clockTick(){
     if(!S) return;
@@ -965,6 +980,7 @@ function makeWordStream(stableMs){
     const rp = S.rp || 0, memBefore = S.mem || [];
     S = null;
     stopAudio();
+    releaseAwake();
     const st = summarize(res);
     $('game').hidden = true; $('end').hidden = false;
     const back = () => { $('end').hidden = true; $('start').hidden = false; $('startMsg').textContent = ''; renderHistory(); renderMemo(); window.scrollTo(0,0); };
@@ -1091,6 +1107,7 @@ function makeWordStream(stableMs){
     $('tot').textContent = n; $('okc').textContent = 0; $('errc').textContent = 0; $('clock').textContent = '⏱ 0:00';
     $('start').hidden = true; $('game').hidden = false;
     fillQueue(); S.started = true; startCurrent(true);
+    keepAwake();
     if(mic) timer = setInterval(tick, 50);
     clockTimer = setInterval(clockTick, 250);
   }
