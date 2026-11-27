@@ -146,6 +146,23 @@
         </select>
       </div>
       <div class="row" style="margin-top:10px">
+        <label for="pos">Notes à lire</label>
+        <select id="pos">
+          <option value="all">Lignes et interlignes</option>
+          <option value="lines">Lignes seulement</option>
+          <option value="spaces">Interlignes seulement</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label for="ruler">Règle des tierces</label>
+        <select id="ruler">
+          <option value="off">Masquée</option>
+          <option value="left">À gauche</option>
+          <option value="right">À droite</option>
+        </select>
+      </div>
+      <p class="mute" id="rulerHint" style="margin:4px 0 0" hidden>📏 Pour débuter : la règle rappelle la chaîne <b>do mi sol si ré fa la do</b>. Chaque ligne est une tierce au-dessus de la précédente ; sur les interlignes la chaîne continue de la même façon (ré fa la do mi sol si).</p>
+      <div class="row" style="margin-top:10px">
         <label for="answer">Réponse</label>
         <select id="answer">
           <option value="buttons">Boutons seulement</option>
@@ -280,13 +297,17 @@ function ledgers(d){
 }
 
 // Tirage d'une note : clé de sol (Do4..Do6) ou clé de fa (Do2..Do4), jamais le même nom deux fois de suite
-function pickNote(prevStep, rnd){
+// Ligne si d est pair (Do central = ligne supplémentaire), interligne si d est impair
+const isLine = d => Math.abs(d) % 2 === 0;
+// pos : 'all' (lignes et interlignes), 'lines' ou 'spaces'
+const posOk = (d, pos) => !pos || pos === 'all' || (pos === 'lines') === isLine(d);
+function pickNote(prevStep, rnd, pos){
   rnd = rnd || Math.random;
   for(;;){
     const clef = rnd() < 0.5 ? 'sol' : 'fa';
     const lo = clef==='sol' ? 0 : -14, hi = clef==='sol' ? 14 : 0;
     const d = lo + Math.floor(rnd()*(hi-lo+1));
-    if(stepOf(d) !== prevStep) return {clef, d};
+    if(stepOf(d) !== prevStep && posOk(d, pos)) return {clef, d};
   }
 }
 
@@ -305,6 +326,7 @@ function summarize(res){
     byName: grp(r => stepOf(r.d), [0,1,2,3,4,5,6]),
     byClef: grp(r => r.clef, ['sol','fa']),
     byZone: grp(r => ledgers(r.d).length ? 'led' : 'in', ['in','led']),
+    byLine: grp(r => isLine(r.d) ? 'line' : 'space', ['line','space']),
     byKind: grp(r => r.review ? 'rv' : 'rnd', ['rv','rnd'])
   };
 }
@@ -409,7 +431,7 @@ function makeWordStream(stableMs){
 (function(){
   const $ = id => document.getElementById(id);
   const REQ = 5;           // 5 mesures stables de 50 ms = 250 ms de note tenue
-  const HKEY = 'solfege.v1.games', SKEY = 'solfege.v1.sound', LKEY = 'solfege.v1.look', RKEY = 'solfege.v1.review', RPKEY = 'solfege.v1.reviewPct', KKEY = 'solfege.v1.kbd', AKEY = 'solfege.v1.answer';
+  const HKEY = 'solfege.v1.games', SKEY = 'solfege.v1.sound', LKEY = 'solfege.v1.look', RKEY = 'solfege.v1.review', RPKEY = 'solfege.v1.reviewPct', KKEY = 'solfege.v1.kbd', AKEY = 'solfege.v1.answer', PKEY = 'solfege.v1.pos', RUKEY = 'solfege.v1.ruler';
   let S = null;            // session en cours
   let ctx = null, an = null, buf = null, stream = null, timer = null, clockTimer = null;
   let soundOn = true;
@@ -717,7 +739,21 @@ function makeWordStream(stableMs){
     return `<div class="chips">${list.map(m => `<div class="chip ${cls||''}">${miniStaff(m)}<span>${noteLabel(m.d)}</span>${info ? `<i>${info(m)}</i>` : ''}</div>`).join('')}</div>`;
   }
 
-  function drawStaticStaff(look){
+  // Règle des tierces : la chaîne do mi sol si ré fa la do posée sur les lignes (ou les interlignes)
+  function rulerSvg(x, pos){
+    const onSpaces = pos === 'spaces';
+    let r = `<rect x="${x}" y="8" width="34" height="220" rx="7" fill="#f3efe3" stroke="#e0d9c6"/>`;
+    for(let d = -14; d <= 14; d++){
+      if(isLine(d) === onSpaces) continue;
+      const nm = NAMES[stepOf(d)], isDo = stepOf(d) === 0, yy = yOf(d);
+      r += `<line x1="${x+3}" x2="${x+7}" y1="${yy}" y2="${yy}" stroke="${isDo ? '#d62828' : '#b9b19c'}" stroke-width="1"/>`;
+      r += `<text x="${x+20}" y="${yy+3.3}" text-anchor="middle" font-size="9.5" font-weight="${isDo ? 700 : 600}" fill="${isDo ? '#d62828' : '#3d3a33'}" font-family="system-ui,-apple-system,sans-serif">${nm}</text>`;
+    }
+    return r;
+  }
+
+  function drawStaticStaff(look, ruler, pos){
+    ruler = ruler || 'off';
     let g = look > 1 ? `<rect id="cursor" x="${posX(0,look)-17}" y="6" width="34" height="224" rx="9"/>` : '';
     const X1 = 18, X2 = 302;
     [2,4,6,8,10,-2,-4,-6,-8,-10].forEach(d => {
@@ -727,7 +763,10 @@ function makeWordStream(stableMs){
     g += `<line class="ln" x1="${X2}" x2="${X2}" y1="${yOf(10)}" y2="${yOf(2)}"/><line class="ln" x1="${X2}" x2="${X2}" y1="${yOf(-2)}" y2="${yOf(-10)}"/>`;
     g += `<g transform="translate(46 ${yOf(4)})"><path d="${TREBLE}" fill="none" stroke="#111" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></g>`;
     g += `<g transform="translate(42 ${yOf(-4)})"><path d="${BASS}" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round"/><circle cx="-6" cy="0" r="5" fill="#111"/><circle cx="33" cy="-7" r="2.6" fill="#111"/><circle cx="33" cy="7" r="2.6" fill="#111"/></g>`;
-    $('staff').innerHTML = g + `<g id="note" class="${look>1?'anim':''}"></g>`;
+    const W = ruler === 'off' ? 320 : 358, off = ruler === 'left' ? 38 : 0;
+    const rul = ruler === 'left' ? rulerSvg(2, pos) : ruler === 'right' ? rulerSvg(322, pos) : '';
+    $('staff').setAttribute('viewBox', `0 0 ${W} 236`);
+    $('staff').innerHTML = rul + `<g transform="translate(${off} 0)">` + g + `<g id="note" class="${look>1?'anim':''}"></g></g>`;
   }
 
   // Dessin d'une note centrée en x = 0 (le groupe est ensuite translaté)
@@ -750,7 +789,7 @@ function makeWordStream(stableMs){
   function pushNote(){
     const last = S.queue.length ? S.queue[S.queue.length-1].note : S.prevNote;
     const prevStep = last ? stepOf(last.d) : -1;
-    const note = (S.plan.has(S.issued) && pickReview(S.mem, prevStep)) || pickNote(prevStep);
+    const note = (S.plan.has(S.issued) && pickReview(S.mem, prevStep)) || pickNote(prevStep, null, S.pos);
     const el = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     el.innerHTML = noteSvg(note);
     const q = {note, el};
@@ -950,7 +989,7 @@ function makeWordStream(stableMs){
     const secs = recent.map(g => Math.round(g.avg/100)/10);
     const best = Math.max(...H.map(g => g.pct));
     const rows = H.slice(-8).reverse().map(g =>
-      `<tr><td>${fmtDate(g.t)}${g.fast ? ' ⚡' : ''}${(g.look||1) > 1 ? ' 👁' + g.look : ''}${g.rp ? ' 🔁' : ''}${g.ans === 'words' ? ' 🗣' : ''}</td><td class="n">${g.n}</td><td class="n"><b>${g.pct} %</b></td><td class="n">${fmtTime(g.ms)}</td><td class="n">${(g.avg/1000).toFixed(1)} s</td></tr>`).join('');
+      `<tr><td>${fmtDate(g.t)}${g.fast ? ' ⚡' : ''}${(g.look||1) > 1 ? ' 👁' + g.look : ''}${g.rp ? ' 🔁' : ''}${g.ans === 'words' ? ' 🗣' : ''}${g.pos === 'lines' ? ' ≡' : g.pos === 'spaces' ? ' ◌' : ''}${g.ruler && g.ruler !== 'off' ? ' 📏' : ''}</td><td class="n">${g.n}</td><td class="n"><b>${g.pct} %</b></td><td class="n">${fmtTime(g.ms)}</td><td class="n">${(g.avg/1000).toFixed(1)} s</td></tr>`).join('');
     el.innerHTML = `
       <h2>Mes progrès</h2>
       <div class="mute">${H.length} partie${H.length>1?'s':''} · meilleur score : <b>${best} %</b></div>
@@ -958,7 +997,7 @@ function makeWordStream(stableMs){
       ${spark(pcts, 0, 100, ' %', '#3b5bdb')}
       <div class="charttitle">Temps moyen par note (plus bas = mieux)</div>
       ${spark(secs, 0, Math.max(...secs)*1.2 || 1, ' s', '#1a9b4b')}
-      <div class="mute" style="font-size:12px;margin-top:8px">⚡ son coupé · 👁 anticipation · 🔁 révision des notes ratées · 🗣 mots parlés</div>
+      <div class="mute" style="font-size:12px;margin-top:8px">⚡ son coupé · 👁 anticipation · 🔁 révision des notes ratées · 🗣 mots parlés · ≡ lignes seules · ◌ interlignes seuls · 📏 règle</div>
       <div class="tw"><table><tr><th>Date</th><th class="n">Notes</th><th class="n">Score</th><th class="n">Durée</th><th class="n">Moy.</th></tr>${rows}</table></div>
       <div style="margin-top:10px"><button class="ghost small" id="clear">Effacer l'historique</button></div>`;
     el.hidden = false;
@@ -976,7 +1015,7 @@ function makeWordStream(stableMs){
     const res = S.res;
     const fast = res.length > 0 && S.fastN*2 >= res.length;   // majorité des notes jouées sans son
     const look = S.look || 1;
-    const ans = S.mode || 'sing', wMiss = S.wMiss || 0;
+    const ans = S.mode || 'sing', wMiss = S.wMiss || 0, pos = S.pos || 'all', ruler = S.ruler || 'off';
     const rp = S.rp || 0, memBefore = S.mem || [];
     S = null;
     stopAudio();
@@ -991,12 +1030,12 @@ function makeWordStream(stableMs){
     }
     const p = pct(st.first, st.n);
     const hist = loadHist();
-    const sameMode = hist.filter(g => !!g.fast === fast && (g.look||1) === look && (g.ans === 'words') === (ans === 'words'));   // même mode : son/rapide et nombre de notes visibles
+    const sameMode = hist.filter(g => !!g.fast === fast && (g.look||1) === look && (g.ans === 'words') === (ans === 'words') && (g.pos || 'all') === pos);   // même mode : son/rapide et nombre de notes visibles
     const prev = sameMode.length ? sameMode[sameMode.length-1] : null;
     const bestBefore = sameMode.length ? Math.max(...sameMode.map(g => g.pct)) : -1;
-    const modeTxt = (ans === 'words' ? ' aux mots parlés' : '') + (fast ? ' en mode rapide' : '') + (look > 1 ? ` en anticipation (${look} notes)` : '');
+    const modeTxt = (pos === 'lines' ? ' sur les lignes' : pos === 'spaces' ? ' sur les interlignes' : '') + (ans === 'words' ? ' aux mots parlés' : '') + (fast ? ' en mode rapide' : '') + (look > 1 ? ` en anticipation (${look} notes)` : '');
     let saved = false;
-    if(st.n >= 5){ hist.push({t:Date.now(), n:st.n, first:st.first, errs:st.errs, ms:Math.round(elapsed), avg:Math.round(st.avgMs), pct:p, fast, look, ans, wMiss, rp, rvN:st.byKind[0].n, rvFirst:st.byKind[0].first}); saved = saveHist(hist); }
+    if(st.n >= 5){ hist.push({t:Date.now(), n:st.n, first:st.first, errs:st.errs, ms:Math.round(elapsed), avg:Math.round(st.avgMs), pct:p, fast, look, ans, wMiss, pos, ruler, rp, rvN:st.byKind[0].n, rvFirst:st.byKind[0].first}); saved = saveHist(hist); }
     // mémoire des notes ratées (mise à jour même si l'option est désactivée)
     const upd = updateMemory(memBefore, res);
     saveMem(upd.mem);
@@ -1031,8 +1070,8 @@ function makeWordStream(stableMs){
       const q = pct(x.first, x.n);
       return `<tr><td>${NAMES[x.key]}</td><td class="n">${x.first}/${x.n}</td><td>${barHtml(q)}</td><td class="n">${x.errs}</td></tr>`;
     }).join('');
-    const lab = {sol:'Clé de sol', fa:'Clé de fa', in:'Dans la portée', led:'Lignes supplémentaires'};
-    const other = [...st.byClef, ...st.byZone].filter(x => x.n).map(x => {
+    const lab = {sol:'Clé de sol', fa:'Clé de fa', in:'Dans la portée', led:'Lignes supplémentaires', line:'Sur les lignes', space:'Dans les interlignes'};
+    const other = [...st.byLine, ...st.byClef, ...st.byZone].filter(x => x.n).map(x => {
       const q = pct(x.first, x.n);
       return `<tr><td>${lab[x.key]}</td><td class="n">${x.first}/${x.n}</td><td>${barHtml(q)}</td><td class="n">${x.errs}</td></tr>`;
     }).join('');
@@ -1069,7 +1108,8 @@ function makeWordStream(stableMs){
     const n = parseInt($('count').value, 10) || 100;
     const look = Math.min(4, Math.max(1, parseInt($('look').value, 10) || 1));
     const rp = Math.max(0, Math.min(50, parseInt($('review').value, 10) || 0));
-    const mem = loadMem();
+    const pos = $('pos').value, ruler = $('ruler').value;
+    const mem = loadMem().filter(m => posOk(m.d, pos));      // révision : seulement les positions travaillées
     let mode = $('answer').value;
     $('startMsg').textContent = '';
     unlockAudio();                 // doit être appelé directement dans le geste de l'utilisateur
@@ -1100,10 +1140,11 @@ function makeWordStream(stableMs){
     try{ localStorage.setItem(AKEY, $('answer').value); }catch(e){}
     S = {n, mic, mode, wq:[], wIgnore:false, wMiss:0, draining:false, res:[], cur:null, totalErr:0, lastOk:null, locked:false, muteUntil:0, fastN:0, elapsed:0, lastTick:performance.now(),
          look, queue:[], issued:0, prevNote:null, started:false,
-         rp, mem, plan: rp ? makePlan(n, rp, mem.length) : new Set()};
+         rp, mem, pos, ruler, plan: rp ? makePlan(n, rp, mem.length) : new Set()};
+    try{ localStorage.setItem(PKEY, pos); localStorage.setItem(RUKEY, ruler); }catch(e){}
     try{ localStorage.setItem(RPKEY, String(rp)); }catch(e){}
     try{ localStorage.setItem(LKEY, String(look)); }catch(e){}
-    drawStaticStaff(look);
+    drawStaticStaff(look, ruler, pos);
     $('tot').textContent = n; $('okc').textContent = 0; $('errc').textContent = 0; $('clock').textContent = '⏱ 0:00';
     $('start').hidden = true; $('game').hidden = false;
     fillQueue(); S.started = true; startCurrent(true);
@@ -1140,6 +1181,12 @@ function makeWordStream(stableMs){
   const paintAnswer = () => { $('wordsHint').hidden = $('answer').value !== 'words'; };
   $('answer').onchange = () => { try{ localStorage.setItem(AKEY, $('answer').value); }catch(e){} paintAnswer(); };
   paintAnswer();
+  try{ const v = localStorage.getItem(PKEY); if(['all','lines','spaces'].includes(v)) $('pos').value = v; }catch(e){}
+  try{ const v = localStorage.getItem(RUKEY); if(['off','left','right'].includes(v)) $('ruler').value = v; }catch(e){}
+  const paintRuler = () => { $('rulerHint').hidden = $('ruler').value === 'off'; };
+  $('ruler').onchange = () => { try{ localStorage.setItem(RUKEY, $('ruler').value); }catch(e){} paintRuler(); };
+  $('pos').onchange = () => { try{ localStorage.setItem(PKEY, $('pos').value); }catch(e){} };
+  paintRuler();
   $('keys').addEventListener('click', e => { const b = e.target.closest('button'); if(b) answer(+b.dataset.s); });
   $('go').onclick = begin;
   $('stop').onclick = () => { if(S) finish(); };
