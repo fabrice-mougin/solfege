@@ -20,7 +20,7 @@ Que tu débutes et confondes encore le Fa et le La en clé de fa, ou que tu lise
 
 - **Sur la grande portée, comme au piano** : clé de sol et clé de fa, avec les lignes supplémentaires au-dessus, au-dessous et autour du Do central (du Do1 au Do5).
 - **Tu réponds comme tu veux** : avec des boutons, en **chantant** la note, ou simplement en **disant son nom** (« do, ré, mi… »).
-- **Elle s'adapte à ton niveau** : règle d'aide pour débuter, lignes ou interlignes seulement, puis anticipation jusqu'à 4 notes à l'avance pour les plus rapides.
+- **Elle s'adapte à ton niveau** : règle d'aide pour débuter, une seule clé, lignes ou interlignes seulement, puis anticipation jusqu'à 4 notes à l'avance pour les plus rapides.
 - **Elle retient tes erreurs** et te les repropose à la partie suivante, jusqu'à ce qu'elles soient corrigées.
 - **Tu vois tes progrès** : score, temps par note, courbes et historique.
 - **Tout reste chez toi** : un seul fichier, aucun compte, aucune donnée envoyée sur Internet (même la reconnaissance vocale tourne dans ton navigateur).
@@ -39,13 +39,17 @@ Une note apparaît, tu donnes son nom. En cas d'erreur, la note passe en rouge e
   <img src="docs/screenshots/03-erreur.png" width="280" alt="Erreur : la note passe en rouge">
 </p>
 
-### La règle des tierces et le travail ciblé
+### Le travail ciblé : une clé, les lignes ou les interlignes, et la règle des tierces
 
 - **Règle des tierces** (à gauche ou à droite) : elle rappelle la chaîne **do mi sol si ré fa la do**, posée sur les lignes, avec les Do en rouge. C'est l'astuce qui fait tout : chaque ligne est une tierce au-dessus de la précédente. Sur les interlignes, la chaîne continue de la même façon.
-- **Notes à lire** : *lignes et interlignes*, *lignes seulement* ou *interlignes seulement*, pour travailler un point faible à la fois.
+- **Clé** : *sol et fa* (grande portée), *clé de sol seulement* ou *clé de fa seulement*. La portée non travaillée reste visible mais estompée, pour garder tes repères.
+- **Notes à lire** : *lignes et interlignes*, *lignes seulement* ou *interlignes seulement*.
+- **Tout se combine** : par exemple clé de sol + interlignes seulement + règle à droite pour ne travailler que les interlignes de la clé de sol. La règle, la révision des notes ratées, les statistiques et l'historique suivent automatiquement ta sélection.
 
 <p align="center">
   <img src="docs/screenshots/07-regle-lignes.png" width="280" alt="Règle des tierces à gauche, lignes seulement">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/11-cle-sol-interlignes.png" width="280" alt="Clé de sol seulement, interlignes, règle à droite">
 </p>
 
 ### Le palais mental des interlignes
@@ -100,7 +104,7 @@ Chaque note ratée est mémorisée à sa position exacte sur la portée. Avec l'
 
 ## 📊 Tes progrès, partie après partie
 
-À la fin de chaque partie : score du premier coup, temps total et temps moyen par note, erreurs par nom de note, par clé, lignes et interlignes, notes corrigées et notes encore ratées. Tu es aussi comparé à **ta partie précédente jouée dans le même mode**, pour des progrès qui veulent dire quelque chose.
+À la fin de chaque partie : score du premier coup, temps total et temps moyen par note, erreurs par nom de note, par clé, lignes et interlignes, notes corrigées et notes encore ratées. Tu es aussi comparé à **ta partie précédente jouée dans le même mode** (mêmes clés, mêmes positions, même façon de répondre…), pour des progrès qui veulent dire quelque chose.
 
 L'écran d'accueil garde l'historique avec deux courbes : ton score qui monte et ton temps par note qui descend.
 
@@ -122,6 +126,7 @@ L'écran d'accueil garde l'historique avec deux courbes : ton score qui monte et
 |---|---|
 | Nombre de notes | 10, 25, 50 ou 100 |
 | Notes visibles | 1 (classique) à 4 (anticipation) |
+| Clé | sol et fa (grande portée), clé de sol seulement, clé de fa seulement |
 | Notes à lire | lignes et interlignes, lignes seulement, interlignes seulement |
 | Règle des tierces | masquée, à gauche, à droite |
 | Réponse | boutons seulement, voix chantée (hauteur), mots parlés |
