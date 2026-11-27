@@ -20,5 +20,5 @@ Ces éléments gardent leur propre licence ; ils ne sont pas couverts par la GPL
 | Sons de piano (29 notes, rééchantillonnées et raccourcies) | intégrés dans `index.html` / `solfege.html` | [Salamander Grand Piano](https://github.com/sfzinstruments/SalamanderGrandPiano), Alexander Holm (Yamaha C5) | CC BY 3.0 |
 | Modèle de reconnaissance vocale `vosk-model-small-fr-0.22` | `model.tar.gz` | [Alpha Cephei](https://alphacephei.com/vosk/models) | voir la page des modèles Vosk (Apache 2.0 pour la plupart des modèles : [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt)) |
 | Bibliothèque de reconnaissance `vosk-browser` 0.0.8 | chargée depuis le CDN jsDelivr, non incluse | [ccoreilly/vosk-browser](https://github.com/ccoreilly/vosk-browser) | Apache 2.0 |
-| Son « ding » des notes corrigées | intégré dans `index.html` / `solfege.html` | à compléter | à compléter |
-| Icône clé de sol (favicon) | intégrée dans `index.html` / `solfege.html` | à compléter | à compléter |
+| Son « ding » des notes corrigées | intégré dans `index.html` / `solfege.html` | Fabrice MOUGIN | libre de droits |
+| Icône clé de sol (favicon) | intégrée dans `index.html` / `solfege.html` | Judith MOUGIN | libre de droits |
