@@ -178,6 +178,7 @@ Les contributions sont les bienvenues : ouvre une *issue* pour une idée ou un b
 
 - **Sons de piano** : [Salamander Grand Piano](https://github.com/sfzinstruments/SalamanderGrandPiano) (Yamaha C5), par Alexander Holm, licence **CC BY 3.0**.
 - **Reconnaissance vocale** : [Vosk](https://alphacephei.com/vosk/) (Alpha Cephei) via [vosk-browser](https://github.com/ccoreilly/vosk-browser) (Apache 2.0), modèle `vosk-model-small-fr-0.22`.
+- **Son « ding »** des notes corrigées : Fabrice MOUGIN · **icône clé de sol** : Judith MOUGIN, tous deux placés dans le domaine public (**CC0**).
 
 Le détail des licences des éléments de tiers est dans [`NOTICE.md`](NOTICE.md).
 
